@@ -2,6 +2,7 @@
 
 import csv
 import random
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from faker import Faker
@@ -14,6 +15,12 @@ NUM_DRIVERS = 50
 CSV_DIR = Path(__file__).resolve().parents[2] / "data" / "csv"
 VEHICLES_CSV_PATH = CSV_DIR / "vehicles.csv"
 DRIVERS_CSV_PATH = CSV_DIR / "drivers.csv"
+TRIPS_CSV_PATH = CSV_DIR / "trips.csv"
+
+TRIP_START_DATE = date(2026, 4, 1)
+TRIP_END_DATE = date(2026, 4, 30)
+MIN_TRIPS_PER_DAY = 3
+MAX_TRIPS_PER_DAY = 8
 
 MAKES_MODELS: dict[str, list[str]] = {
     "Ford": ["F-150", "Transit", "E-Series", "Explorer"],
@@ -53,6 +60,22 @@ class Driver(BaseModel):
     violations_90d: int
     phone: str
     email: str
+
+
+class Trip(BaseModel):
+    id: str
+    vehicle_id: str
+    driver_id: str
+    start_time: str
+    end_time: str
+    distance_miles: float
+    fuel_used_gallons: float
+    start_lat: float
+    start_lon: float
+    end_lat: float
+    end_lon: float
+    max_speed_mph: int
+    avg_speed_mph: int
 
 
 def generate_drivers(count: int, faker: Faker) -> list[Driver]:
@@ -98,6 +121,55 @@ def generate_vehicles(count: int, faker: Faker, drivers: list[Driver]) -> list[V
     return vehicles
 
 
+def generate_trips(vehicles: list[Vehicle], faker: Faker) -> list[Trip]:
+    trips: list[Trip] = []
+    trip_counter = 1
+    num_days = (TRIP_END_DATE - TRIP_START_DATE).days + 1
+
+    for vehicle in vehicles:
+        for day_offset in range(num_days):
+            trip_date = TRIP_START_DATE + timedelta(days=day_offset)
+            day_start = datetime.combine(trip_date, datetime.min.time())
+            num_trips = random.randint(MIN_TRIPS_PER_DAY, MAX_TRIPS_PER_DAY)
+            # Cursor tracks hours-from-midnight for the next trip's start, so trips
+            # within a day stay in order and don't overlap.
+            hour_cursor = random.uniform(5.0, 8.0)
+            for _ in range(num_trips):
+                if hour_cursor > 22.0:
+                    break
+                start_dt = day_start + timedelta(hours=hour_cursor)
+                duration_minutes = random.uniform(10.0, 90.0)
+                end_dt = start_dt + timedelta(minutes=duration_minutes)
+                avg_speed_mph = random.randint(20, 65)
+                max_speed_mph = avg_speed_mph + random.randint(0, 30)
+                distance_miles = round(avg_speed_mph * (duration_minutes / 60.0), 1)
+                fuel_used_gallons = round(distance_miles / random.uniform(6.0, 22.0), 2)
+                start_lat, start_lon, _, _, _ = faker.local_latlng(country_code="US")
+                end_lat, end_lon, _, _, _ = faker.local_latlng(country_code="US")
+
+                trip = Trip(
+                    id=f"TRP-{trip_counter:07d}",
+                    vehicle_id=vehicle.id,
+                    driver_id=vehicle.driver_id,
+                    start_time=start_dt.isoformat(),
+                    end_time=end_dt.isoformat(),
+                    distance_miles=distance_miles,
+                    fuel_used_gallons=fuel_used_gallons,
+                    start_lat=float(start_lat),
+                    start_lon=float(start_lon),
+                    end_lat=float(end_lat),
+                    end_lon=float(end_lon),
+                    max_speed_mph=max_speed_mph,
+                    avg_speed_mph=avg_speed_mph,
+                )
+                trips.append(trip)
+                trip_counter += 1
+
+                hours_elapsed = (end_dt - day_start).total_seconds() / 3600.0
+                hour_cursor = hours_elapsed + random.uniform(0.5, 3.0)
+    return trips
+
+
 def write_csv(records: list[BaseModel], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = list(type(records[0]).model_fields.keys())
@@ -120,3 +192,7 @@ if __name__ == "__main__":
     vehicles = generate_vehicles(NUM_VEHICLES, fake, drivers)
     write_csv(vehicles, VEHICLES_CSV_PATH)
     print(f"Wrote {len(vehicles)} vehicles to {VEHICLES_CSV_PATH}")
+
+    trips = generate_trips(vehicles, fake)
+    write_csv(trips, TRIPS_CSV_PATH)
+    print(f"Wrote {len(trips)} trips to {TRIPS_CSV_PATH}")
